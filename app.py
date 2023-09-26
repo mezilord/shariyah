@@ -1,104 +1,75 @@
+import ast
+import os
 import streamlit as st
-from dotenv import load_dotenv
-from PyPDF2 import PdfReader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceInstructEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
-from htmlTemplates import css, bot_template, user_template
-from langchain.llms import HuggingFaceHub
+from gpt import is_compliant
+from rules import murabahah_rules, mudarabah_rules, credit_debit_rules, ijara_rules
+from extract_text import extract_text_from_image, extract_text_from_pdf
+from highlight import highlight_text
+import tempfile
 
-def get_pdf_text(pdf_docs):
-    text = ""
-    for pdf in pdf_docs:
-        pdf_reader = PdfReader(pdf)
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-    return text
+rules = ""
 
+st.title("Transaction Checker for Shariyah Compliance")
+st.subheader("Your documents")
+include_murabahah = st.checkbox("Include Murabahah")
+include_mudarabah = st.checkbox("Include Mudarabah")
+include_card = st.checkbox("Include Card Rules")
+include_ijara = st.checkbox("Include Ijara Rules")
+docs = st.file_uploader(
+    "Upload your documents here and click on 'Process'", accept_multiple_files=True)
+if st.button("Process"):
+    if docs:
+        with st.spinner("Processing"):
+            #include rules as per user selection
+            if include_murabahah:
+                rules += murabahah_rules
+            if include_mudarabah:
+                rules += mudarabah_rules    
+            if include_card:
+                rules += credit_debit_rules
+            if include_ijara:    
+                rules += ijara_rules
 
-def get_text_chunks(text):
-    text_splitter = CharacterTextSplitter(
-        separator="\n",
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len
-    )
-    chunks = text_splitter.split_text(text)
-    return chunks
+            extracted_text = []
+            for doc in docs:
+                if doc.name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    text_from_image = extract_text_from_image(doc)
+                    if text_from_image:
+                        extracted_text.append([doc.name, f"File Name: {doc.name}\n{text_from_image}\n\n"])
+                elif doc.name.lower().endswith('.pdf'):
+                    text_from_doc = extract_text_from_pdf(doc)
+                    if text_from_doc:
+                        extracted_text.append([doc.name, f"File Name: {doc.name}\n{text_from_doc}\n\n"])    
+                else:
+                    st.warning(f"Unsupported file format: {doc.name}")
+            if extracted_text:
+                st.subheader("Result:")
+                for doc in extracted_text:
+                    compliance_result = is_compliant(doc[1], rules)
+                    st.write(f"Compliance Result for {doc[0]}: {compliance_result}")
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        image_folder = os.path.join(temp_dir, "highlighted_images")
+                    # to convert the list enclosed in string (given by gpt) to a normal list
+                        try:
+                            result = ast.literal_eval(compliance_result)
+                        except (SyntaxError, ValueError) as e:
+                            result = compliance_result  
+                        compliance_result = result
+                    # Create the folder
+                    os.makedirs(image_folder)
+                    if isinstance(compliance_result, list):
+                        file_name, text_to_highlight = compliance_result[0], compliance_result[1]
+                        image_path = os.path.join(image_folder, os.path.basename(file_name))
+                        original_file = ""
+                        for doc in extracted_text:
+                            if doc[0] == compliance_result[0]: # finding the file with same name as the one in the result
+                                original_file = doc[1]
+                                break  # Exit the loop once a match is found
 
+                        highlighted_data_html_file = highlight_text(original_file, text_to_highlight)
+                        output_filename = "{}.html".format(file_name)
+                        with open(output_filename, "w") as f:
+                            f.write(highlighted_data_html_file)
 
-def get_vectorstore(text_chunks):
-    embeddings = OpenAIEmbeddings()
-    # embeddings = HuggingFaceInstructEmbeddings(model_name="hkunlp/instructor-xl")
-    vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
-    return vectorstore
-
-
-def get_conversation_chain(vectorstore):
-    llm = ChatOpenAI()
-    # llm = HuggingFaceHub(repo_id="google/flan-t5-xxl", model_kwargs={"temperature":0.5, "max_length":512})
-
-    memory = ConversationBufferMemory(
-        memory_key='chat_history', return_messages=True)
-    conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        memory=memory
-    )
-    return conversation_chain
-
-
-def handle_userinput(user_question):
-    response = st.session_state.conversation({'question': user_question})
-    st.session_state.chat_history = response['chat_history']
-
-    for i, message in enumerate(st.session_state.chat_history):
-        if i % 2 == 0:
-            st.write(user_template.replace(
-                "{{MSG}}", message.content), unsafe_allow_html=True)
-        else:
-            st.write(bot_template.replace(
-                "{{MSG}}", message.content), unsafe_allow_html=True)
-
-
-def main():
-    load_dotenv()
-    st.set_page_config(page_title="Chat with multiple PDFs",
-                       page_icon=":books:")
-    st.write(css, unsafe_allow_html=True)
-
-    if "conversation" not in st.session_state:
-        st.session_state.conversation = None
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = None
-
-    st.header("Chat with multiple PDFs :books:")
-    user_question = st.text_input("Ask a question about your documents:")
-    if user_question:
-        handle_userinput(user_question)
-
-    with st.sidebar:
-        st.subheader("Your documents")
-        pdf_docs = st.file_uploader(
-            "Upload your PDFs here and click on 'Process'", accept_multiple_files=True)
-        if st.button("Process"):
-            with st.spinner("Processing"):
-                # get pdf text
-                raw_text = get_pdf_text(pdf_docs)
-
-                # get the text chunks
-                text_chunks = get_text_chunks(raw_text)
-
-                # create vector store
-                vectorstore = get_vectorstore(text_chunks)
-
-                # create conversation chain
-                st.session_state.conversation = get_conversation_chain(
-                    vectorstore)
-
-
-if __name__ == '__main__':
-    main()
+                    elif not isinstance(compliance_result, list): #this will run when no violations found
+                       st.write("No violations found")
