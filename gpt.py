@@ -1,7 +1,5 @@
 import openai
-openai.api_key = "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"
-# openai.api_key = "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"
-# openai.api_key = "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"
+openai.api_key = ""
 
 def get_completion(prompt, rules, model="gpt-3.5-turbo-16k"):
     messages = [
