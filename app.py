@@ -66,10 +66,10 @@ if st.button("Process"):
                                 original_file = doc[1]
                                 break  # Exit the loop once a match is found
 
-                        highlighted_data_html_file = highlight_text(original_file, text_to_highlight)
-                        output_filename = "{}.html".format(file_name)
-                        with open(output_filename, "w") as f:
-                            f.write(highlighted_data_html_file)
+                    #     highlighted_data_html_file = highlight_text(original_file, text_to_highlight)
+                    #     output_filename = "{}.html".format(file_name)
+                    #     with open(output_filename, "w") as f:
+                    #         f.write(highlighted_data_html_file)
 
-                    elif not isinstance(compliance_result, list): #this will run when no violations found
-                       st.write("No violations found")
+                    # elif not isinstance(compliance_result, list): #this will run when no violations found
+                    #    st.write("No violations found")
